@@ -1,0 +1,313 @@
+/*
+    Zadatak: Upravljanje čitačima, pisačima i brisačima uz korištenje monitora
+
+    Ovaj zadatak simulira rad tri vrste dretvi (čitači, pisači i brisači) koje koriste zajedničku listu 
+    za obavljanje operacija. Sinkronizacija rada dretvi postiže se korištenjem monitora, koji omogućuju 
+    kontrolu pristupa dretvama prema pravilima definiranim za čitanje, pisanje i brisanje.
+
+    Pravila zadatka:
+    1. **Čitači**: Čitači samo čitaju sadržaj liste te se mogu izvoditi paralelno. Čitanje ne ometa 
+       rad drugih čitača niti pisača. Čitači ne blokiraju niti ometaju druge aktivnosti osim rada brisača.
+    
+    2. **Pisači**: Pisači dodaju nove elemente na kraj liste. Operacije pisanja moraju biti međusobno 
+       isključive, tj. samo jedan pisač može pisati u isto vrijeme, kako bi se očuvala konzistentnost liste. 
+       Pisači ne ometaju čitače, ali se ne mogu izvoditi paralelno s drugim pisačima niti brisačima.
+
+    3. **Brisači**: Brisači uklanjaju elemente iz liste. Operacije brisanja zahtijevaju ekskluzivni pristup 
+       cijeloj listi, što znači da se ne mogu izvoditi paralelno s čitačima, pisačima niti drugim brisačima. 
+       Kada brisač izvodi svoju operaciju, sve ostale dretve moraju čekati dok on završi.
+
+    **Upravljanje monitorima**:
+    - Monitori osiguravaju pravilnu sinkronizaciju između dretvi, prema gore navedenim pravilima. 
+      Monitor kontrolira kada koja dretva (čitač, pisač ili brisač) ima pravo pristupa listi.
+    - Više čitača može paralelno čitati listu, dok pisači i brisači imaju striktno isključivi pristup 
+      kada obavljaju svoje operacije. Kada brisač ima pristup, sve ostale dretve (čitači, pisači i brisači) 
+      moraju čekati.
+
+    Simulacija:
+    - Program počinje kreiranjem pisača, koji dodaju nekoliko elemenata u listu.
+    - Nakon toga se kreiraju čitači, koji čitaju listu.
+    - Na kraju se kreiraju brisači, koji uklanjaju elemente iz liste.
+    - Čitača će biti najviše (npr. desetak), pisača nešto manje (npr. 2-4), a brisača najmanje (npr. 1-2).
+
+    Ovaj zadatak naglašava pravilno korištenje monitora za sinkronizaciju pristupa zajedničkoj listi, 
+    prema pravilima paralelnog čitanja i isključivog pisanja i brisanja.
+
+*/
+
+
+#include <iostream>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctime>
+#include <string.h>
+#include <vector>
+#include <unistd.h>
+#include <list>
+#include <iterator>
+
+using namespace std;
+
+// globalne varijable:
+
+//broj koliko kojih dretvi radi i takoder ceka
+int citac_ceka = 0;
+int citac_cita = 0;
+
+int pisac_ceka = 0;
+int pisac_pise = 0;
+
+int brisac_ceka = 0;
+int brisac_brise = 0;
+
+pthread_mutex_t monitor;
+pthread_cond_t red_citaca, red_pisaca, red_brisaca;
+
+//sluzi umjesot liste
+vector<int> lista;
+
+//prototipi funckija:
+int generirajBrojIzIntervala(int pocetak, int kraj);
+void ispisPodataka();
+void* dretvaCitac(void *rbr);
+void* dretvaPisac(void *rbr);
+void* dretvaBrisac(void *rbr);
+
+
+int main() {
+
+   srand(static_cast<unsigned int>(time(nullptr)));
+   //inicijalizacija monitora:
+   pthread_mutex_init(&monitor, NULL);
+
+   int br_citaca = generirajBrojIzIntervala(6, 9);
+   int br_pisaca = generirajBrojIzIntervala(5, 6);
+   int br_brisaca = generirajBrojIzIntervala(1, 2);
+
+   vector<pthread_t> citacId(br_citaca);
+   vector<pthread_t> pisacId(br_pisaca);
+   vector<pthread_t> brisacId(br_brisaca);
+
+    int rbrPisaca[br_pisaca];
+    for(int i = 0; i < br_pisaca; i++) {
+
+        rbrPisaca[i] = i;
+        if(pthread_create(&pisacId.at(i), NULL, dretvaPisac, (void*)&rbrPisaca[i])) {
+            printf("Ne mogu stvoriti novu dretvu!\n"); 
+            exit(1); 
+        }
+    }
+
+    sleep(10); //pricekaj neko virjeme da se stvari izgeneiriraju
+
+    int rbrCitaca[br_citaca];
+    for(int i = 0; i < br_citaca; i++) {
+
+        rbrCitaca[i] = i;
+        if(pthread_create(&citacId.at(i), NULL, dretvaCitac, (void*)&rbrCitaca[i])) {
+            printf("Ne mogu stvoriti novu dretvu!\n"); 
+            exit(1); 
+        }
+    }
+
+
+    int rbrBrisaca[br_brisaca];
+    for(int i = 0; i < br_brisaca; i++) {
+
+        rbrBrisaca[i] = i;
+        if(pthread_create(&brisacId.at(i), NULL, dretvaBrisac, (void*)&rbrBrisaca[i])) {
+            printf("Ne mogu stvoriti novu dretvu!\n"); 
+            exit(1); 
+        }
+    }
+
+    // mozda ce trebat ubacit pthread_join ali za raimd bez toga
+    for(int i = 0; i < br_citaca; i++) pthread_join(citacId.at(i),NULL);
+    for(int i = 0; i < br_pisaca; i++) pthread_join(pisacId.at(i),NULL);
+    for(int i = 0; i < br_brisaca; i++) pthread_join(brisacId.at(i),NULL);
+
+    //efektivno cu program prekinuti sa CTR + c
+
+    return 0;
+}
+
+
+
+
+//funckije:
+int generirajBrojIzIntervala(int pocetak, int kraj) {
+    // Postavljanje seed-a za generiranje nasumičnih brojeva
+    // srand(static_cast<unsigned int>(time(nullptr)));
+    
+    // Generiranje nasumičnog broja u rasponu [pocetak, kraj]
+    return rand() % (kraj - pocetak + 1) + pocetak;
+}
+
+void ispisPodataka(){
+    cout<<"Aktivnih, citaca:"<< citac_cita <<" pisaca:"<< pisac_pise <<" brisaca:"<< brisac_brise <<"\n"; 
+    cout<<"Lista: ";
+    for (auto element : lista) {
+        cout << element << " ";
+    }
+    cout << endl << endl;
+}
+
+
+void* dretvaCitac(void *rbr){
+    long redniBroj = *((int*)rbr);
+
+    while(true){
+
+        pthread_mutex_lock(&monitor);
+        citac_ceka++;
+
+        while((brisac_ceka + brisac_brise > 0)){        
+            pthread_cond_wait(&red_citaca, &monitor);
+        }
+        citac_ceka--;
+        citac_cita++;
+
+        if(lista.empty()) cout << "Lista je prazna" << endl;
+        else {
+            int randPozicija = rand() % lista.size();
+            int vrijednost = lista.at(randPozicija);
+            cout << "Citac " << redniBroj + 1<< " čita " << randPozicija <<". element liste (" << to_string(vrijednost) << ")" << endl;
+            ispisPodataka();
+        }
+
+        pthread_mutex_unlock(&monitor); 
+
+        // simulira rad
+        sleep(generirajBrojIzIntervala(5, 7));
+          
+
+        pthread_mutex_lock(&monitor);
+
+        citac_cita--;
+        if(brisac_brise  == 0 && brisac_ceka >0) {
+            pthread_cond_signal(&red_brisaca);
+        }
+       
+        pthread_mutex_unlock(&monitor); 
+        
+        sleep(generirajBrojIzIntervala(5, 10));
+    }
+    
+    return 0;
+}
+
+void* dretvaPisac(void *rbr){
+    int redniBroj = *((int*)rbr);
+
+    while(true){
+
+        pthread_mutex_lock(&monitor);
+        pisac_ceka++;
+        int noviBroj = generirajBrojIzIntervala(0, 150);
+
+        pisac_ceka++;
+
+        while(brisac_brise > 0 || pisac_pise > 0) {
+            pthread_cond_wait(&red_pisaca, &monitor);
+        }
+
+        pisac_ceka--;
+        pisac_pise++;
+
+        cout << "Pisac[" + to_string(redniBroj + 1) + "] želi dodati " + to_string(noviBroj) + " u listu" << endl;
+        ispisPodataka();
+
+        pthread_mutex_unlock(&monitor);       
+        //simuliraj rad:
+        sleep(generirajBrojIzIntervala(5,8));
+        pthread_mutex_lock(&monitor);
+
+        pisac_pise--;
+
+        if(brisac_ceka > 0) {
+            //osloobodi iz red brisaca
+            pthread_cond_signal(&red_brisaca);
+        }
+        else{
+            if(pisac_ceka > 0)pthread_cond_signal(&red_pisaca);
+        }
+
+        lista.push_back(noviBroj);
+        cout << "pisac " << to_string(redniBroj + 1) << " gotov s poslom" << endl << endl;
+        
+        pthread_mutex_unlock(&monitor);
+        //opet preicekaj novi rad te dretve
+        sleep(generirajBrojIzIntervala(5,10));
+    }
+    
+    return 0;
+}
+
+
+void* dretvaBrisac(void *rbr){
+    int redniBroj = *((int*)rbr);
+
+    int delete_index;
+
+    while(true){
+
+        pthread_mutex_lock(&monitor);
+
+        brisac_ceka++;
+
+        while(brisac_brise > 0 || pisac_pise > 0 || citac_cita > 0){
+            pthread_cond_wait(&red_brisaca, &monitor);
+        }
+
+        brisac_ceka--;
+        brisac_brise++;
+    
+
+        if(lista.empty()) {
+            cout << "Lista je prazna, Brisac " << to_string(redniBroj + 1) << " nema sta obrisati" << endl;
+            ispisPodataka();
+        }
+        else {
+            delete_index = generirajBrojIzIntervala(0, lista.size() - 1);
+            cout << "Brisac " << redniBroj + 1 << " briše " << delete_index + 1 <<". element liste (" << to_string(lista.at(delete_index)) << ")" << endl;
+            ispisPodataka();
+        }
+
+        pthread_mutex_unlock(&monitor);    
+        //simuliraj rad:
+        sleep(generirajBrojIzIntervala(5,8));
+        pthread_mutex_lock(&monitor);
+
+        brisac_brise--;
+
+        if(brisac_ceka > 0) {
+            //oslobodi iz reda brisaca
+            pthread_cond_signal(&red_brisaca);
+        }
+        else{
+            if(pisac_ceka > 0) {
+                pthread_cond_signal(&red_pisaca);
+            }
+            if(citac_ceka > 0) {
+                pthread_cond_broadcast(&red_citaca);
+            }
+        }
+
+        if(lista.size() > 0){
+            lista.erase(lista.begin() + delete_index);
+        }
+
+        cout << "Brisac " << to_string(redniBroj + 1) << " je zavrsio s poslom" << endl << endl;
+
+        pthread_mutex_unlock(&monitor);
+        //opet preicekaj novi rad te dretve
+        sleep(generirajBrojIzIntervala(7,10));
+    }
+    
+    return 0;
+}
